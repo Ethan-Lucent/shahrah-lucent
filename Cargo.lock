@@ -549,6 +549,7 @@ dependencies = [
  "base64",
  "bytes",
  "criterion",
+ "futures-util",
  "lucent-core",
  "lucent-pool",
  "lucent-proto",
