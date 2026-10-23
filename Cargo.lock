@@ -532,7 +532,6 @@ dependencies = [
 name = "lucent-txn"
 version = "0.1.0"
 dependencies = [
- "lucent-core",
  "lucent-pool",
  "lucent-proto",
  "lucent-testkit",
