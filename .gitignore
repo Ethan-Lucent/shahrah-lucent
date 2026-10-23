@@ -2,3 +2,6 @@
 target/
 **/*.rs.bk
 *.pdb
+
+# Created by `lucent serve` with the example configuration
+/commit-log/
