@@ -8,6 +8,11 @@ license.workspace = true
 authors.workspace = true
 default-run = "lucent"
 
+[features]
+default = ["pg-parser"]
+# PostgreSQL's own parser behind sqlparser: see lucent-sql.
+pg-parser = ["lucent-sql/pg-parser"]
+
 [dependencies]
 rustls.workspace = true
 tokio-rustls.workspace = true
