@@ -8,6 +8,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+bytes.workspace = true
 lucent-core.workspace = true
 lucent-proto.workspace = true
 parking_lot.workspace = true

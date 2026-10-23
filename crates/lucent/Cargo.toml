@@ -9,6 +9,7 @@ authors.workspace = true
 default-run = "lucent"
 
 [dependencies]
+bytes.workspace = true
 lucent-core.workspace = true
 lucent-pool.workspace = true
 lucent-proto.workspace = true
