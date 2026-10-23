@@ -10,16 +10,16 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-# repository = "https://github.com/YOUR-USERNAME/meridian"
-authors = ["Meridian contributors"]
+# repository = "https://github.com/YOUR-USERNAME/lucent"
+authors = ["Lucent contributors"]
 
 [workspace.dependencies]
-meridian-proto = { path = "crates/meridian-proto", version = "0.1.0" }
-meridian-sql = { path = "crates/meridian-sql", version = "0.1.0" }
-meridian-core = { path = "crates/meridian-core", version = "0.1.0" }
-meridian-pool = { path = "crates/meridian-pool", version = "0.1.0" }
-meridian-txn = { path = "crates/meridian-txn", version = "0.1.0" }
-meridian-testkit = { path = "crates/meridian-testkit", version = "0.1.0" }
+lucent-proto = { path = "crates/lucent-proto", version = "0.1.0" }
+lucent-sql = { path = "crates/lucent-sql", version = "0.1.0" }
+lucent-core = { path = "crates/lucent-core", version = "0.1.0" }
+lucent-pool = { path = "crates/lucent-pool", version = "0.1.0" }
+lucent-txn = { path = "crates/lucent-txn", version = "0.1.0" }
+lucent-testkit = { path = "crates/lucent-testkit", version = "0.1.0" }
 
 base64 = "0.23.1"
 criterion = { version = "0.7.0", features = ["html_reports"] }
