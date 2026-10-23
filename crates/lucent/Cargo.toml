@@ -9,6 +9,9 @@ authors.workspace = true
 default-run = "lucent"
 
 [dependencies]
+rustls.workspace = true
+tokio-rustls.workspace = true
+rustls-pki-types.workspace = true
 bytes.workspace = true
 lucent-core.workspace = true
 lucent-pool.workspace = true
