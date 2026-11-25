@@ -74,12 +74,13 @@ the analysis cache is worth more than any amount of tuning in the planner. The
 directory is a `BTreeMap`, so lookups grow logarithmically: a thousand-fold
 increase in keys costs 118 ns.
 
-## Comparison with shahrah
+## Improvements on shahrah
 
 [shahrah](https://github.com/rs-alireza/shahrah), by Alireza Eskandari, is
-the project Lucent is based on and the closest comparable one: a Rust proxy
-that keeps a directory of the region each key lives in and moves keys between
-regions. Its own
+the project Lucent is based on: a Rust proxy that keeps a directory of the
+region each key lives in and moves keys between regions. This section
+measures what Lucent improves on it, above all speed, and where shahrah is
+still better. shahrah's own
 [NUMBERS.md](https://github.com/rs-alireza/shahrah/blob/main/docs/NUMBERS.md)
 is careful work — interleaved rounds, distributions rather than single
 figures, a retracted claim, and a plain statement that it costs about 1.5x
@@ -94,76 +95,76 @@ public, so no estimation is involved; shahrah was pinned at `ac057a6`. That
 harness builds shahrah's code, so it is not shipped in this repository; the
 fidelity and three-region kits further down work with any proxy.
 
-### Speed, measured
+### Speed improvements
 
 Both caches are warmed first and then measured with a different literal on
 every call, so each is doing the work it was built for. Benchmarking one
 project's cold path against the other's warm one would produce a larger number
 and mean nothing.
 
-| Workload | Lucent | shahrah | Ratio |
+| Workload | Lucent | shahrah | Speed-up |
 |---|---|---|---|
 | Cached, 256 varying literals | **802 ns** | 2.75 µs | **3.4x** |
 | Cached, repeated statement | **718 ns** | 2.85 µs | **4.0x** |
 | Cold, median across 23 statements | — | — | **~1.7x** |
 
-Cold, Lucent is faster on **all 23** statements, between 1.18x and 2.05x.
-The widest gaps are where predicates get complicated — `tenant_id = 'alice' OR
-name = 'ada'` is 7.56 µs against 15.27 µs — and the narrowest is a plain
-single-row `INSERT`, at 6.68 µs against 7.88 µs.
+Cold, Lucent is faster on **all 23** statements, by 1.18x to 2.05x. The
+biggest improvements are where predicates get complicated — `tenant_id =
+'alice' OR name = 'ada'` takes 7.56 µs, down from 15.27 µs — and the smallest
+is a plain single-row `INSERT`, 6.68 µs down from 7.88 µs.
 
 Re-measured later on the Linux VM, with the analyser grown since (it now sees
 inside `COPY` and `EXPLAIN`) and criterion's measurement time cut to three
 seconds per benchmark:
 
-| Workload | Lucent | shahrah | Ratio |
+| Workload | Lucent | shahrah | Speed-up |
 |---|---|---|---|
 | Cached, 256 varying literals | **983 ns** | 3.15 µs | **3.2x** |
 | Cached, repeated statement | **933 ns** | 3.43 µs | **3.7x** |
 | Cold, median across 23 statements | — | — | **2.2x** |
 
-Cold, Lucent is again faster on all 23, between 1.70x (a multi-row `INSERT`,
-11.0 µs against 18.7 µs) and 3.06x (a key under `AND`, 10.4 µs against
-31.9 µs). The cold gap is wider on this machine than on the first; both are
-reported rather than either being picked.
+Cold, Lucent is again faster on all 23, by 1.70x (a multi-row `INSERT`,
+11.0 µs down from 18.7 µs) to 3.06x (a key under `AND`, 10.4 µs down from
+31.9 µs). The cold improvement is larger on this machine than on the first;
+both are reported rather than either being picked.
 
 Measured a third time, on the same VM, after the analyser learned to read
 every query block and PostgreSQL's own parser began checking every new
 statement shape, as the proxy now ships (`lucent-sql` built with
 `pg-parser`):
 
-| Workload | Lucent | shahrah | Ratio |
+| Workload | Lucent | shahrah | Speed-up |
 |---|---|---|---|
 | Cached, 256 varying literals | **834 ns** | 3.62 µs | **4.3x** |
 | Cached, repeated statement | **934 ns** | 3.12 µs | **3.3x** |
 | Cold, median across 23 statements | — | — | **1.41x** |
 
-Cold, Lucent is still faster on all 23, now between 1.05x (`count(*)`
-across regions, 11.5 µs against 12.1 µs) and 1.83x (the same key under `OR`,
-16.9 µs against 31.0 µs). The check costs Lucent most of its cold lead, and
+Cold, Lucent is still faster on all 23, now by 1.05x (`count(*)` across
+regions, 11.5 µs down from 12.1 µs) to 1.83x (the same key under `OR`,
+16.9 µs down from 31.0 µs). The check costs most of the cold improvement, and
 it is paid once per statement shape.
 
-The gap widens with the cache because the two caches are doing different
-amounts of work on a hit, not because either is badly written.
+The improvement is larger with the cache because the two caches are doing
+different amounts of work on a hit, not because either is badly written.
 
 ### A correction
 
-An earlier draft of this document compared Lucent's measured 0.78 µs against
-shahrah's **published** 13 µs and described the resulting 15x as
-"indicated but not proven". That extrapolation was wrong by about a factor of
-four.
+An earlier draft of this document put the speed improvement at 15x, from
+Lucent's measured 0.78 µs and shahrah's **published** 13 µs, and described
+it as "indicated but not proven". That extrapolation was wrong by about a
+factor of four.
 
 Running its code here gives 2.75 µs, not 13 µs. The published figure is
 CPU-µs per transaction under 64 concurrent clients on an i3-1315U; this is
 single-threaded wall-clock on an i5-12600K. Those are not the same quantity,
 and the difference between them was most of the apparent gap.
 
-The real factor is **3.4x to 4.0x**. It is kept here because a benchmark
+The real improvement is **3.4x to 4.0x**. It is kept here because a benchmark
 document that quietly drops its own overstatements is not worth reading.
 
 ### Decisions, measured
 
-Speed is the easy comparison and the less interesting one. Given identical
+Speed is not the only improvement. Given identical
 input, which statements does each project agree to run? shahrah's
 proxy can also read a sharded table from every shard when the table opts into
 *broadcast*, so it is shown both ways: as configured by default, and with both
@@ -268,7 +269,7 @@ combined in a way no region can do alone (a join not on the key, a replicated
 table filtered by rows spread across regions), and shahrah refuses
 them too.
 
-### Where shahrah and others are better
+### Where shahrah and others are still better
 
 - **Hearing about a move.** shahrah's proxies form a Raft group that
   agrees on the topology and hears about a move at once. Lucent's proxies
@@ -321,7 +322,7 @@ pgbench runs beside the eu-west proxies, four clients, each workload through
 each proxy in turn, twice, 12 seconds a time. Milliseconds, p50 / p95, and
 transactions per second:
 
-| Workload | Lucent | shahrah | |
+| Workload | Lucent | shahrah | Speed-up |
 |---|---|---|---|
 | point read, home region | **0.20 / 0.39**, 17,217/s | 0.25 / 0.48, 14,008/s | 1.23x the rate |
 | prepared point read, home region | **0.16 / 0.28**, 22,609/s | 0.17 / 0.31, 20,863/s | 1.08x |
@@ -405,7 +406,7 @@ pgbench 16.15, six seconds per run, `-j` equal to `-c`, with direct, Lucent
 and shahrah taking turns in each of three rounds. Medians, in
 transactions per second, with the range across rounds:
 
-| | direct | Lucent | shahrah | Lucent / shahrah |
+| | direct | Lucent | shahrah | Speed-up |
 |---|---|---|---|---|
 | simple, 1 client | 7 039 (7 035–7 119) | **4 266** (4 133–4 337) | 3 465 (3 358–3 953) | **1.23x** |
 | simple, 16 clients | 19 503 (18 288–19 662) | **15 008** (14 053–16 075) | 12 919 (12 450–13 177) | **1.16x** |

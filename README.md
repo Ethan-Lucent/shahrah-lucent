@@ -68,9 +68,10 @@ Lucent handles the hard half.
 | `users JOIN orders ON o.tenant_id = u.tenant_id`, no key | refuse | every region at once: rows only meet where their keys match |
 | `users JOIN orders ON o.buyer = u.id` across regions | refuse | **refuse** — and say exactly why |
 
-See [docs/NUMBERS.md](docs/NUMBERS.md) for a measured head-to-head against
-[shahrah](https://github.com/rs-alireza/shahrah), the project Lucent is
-based on, run on the same machine with the same statements.
+See [docs/NUMBERS.md](docs/NUMBERS.md) for what Lucent improves on
+[shahrah](https://github.com/rs-alireza/shahrah), the project it is based on,
+in speed and in the statements it can route, measured on the same machine
+with the same statements.
 
 The last two rows matter as much as the others. A `count(DISTINCT country)`
 cannot be rebuilt from per-region answers: the same country in two regions
@@ -486,20 +487,22 @@ that checks a shape before keeping it, come from
 [shahrah](https://github.com/rs-alireza/shahrah), which documented the
 `where id = -1` case first.
 
-Against shahrah, with both analysers compiled into one process on one
-machine rather than compared across published figures: **3.3-4.3x faster
-cached**, and faster on all 23 statements cold even with PostgreSQL's parser
-checking each new one. Lucent runs all 23 of those statements; shahrah runs
-12, or 18 with its opt-in broadcast reads. On 51 statements over real data in
-three regions, Lucent gives PostgreSQL's answer 46 times and shahrah 22;
-neither gives a wrong one. In front of real PostgreSQL 16 under pgbench, on
-one machine, Lucent ran **1.15x to 1.23x** shahrah's transactions per
-second, simple and prepared, one client and sixteen. Through the proxy end to
-end, a point read costs 21 µs over a direct connection on loopback. With
-three regions 75 and 110 ms apart, Lucent reads and writes at home
-1.08–1.23x as fast as shahrah, matches it across a region, counts over every
-region in 113 ms to its 190, and inserts new keys it refuses. Method,
-variance, and the places shahrah and others are better:
+Lucent improves on shahrah's speed. With both analysers compiled into one
+process on one machine, rather than compared across published figures, a
+routing decision is **3.3-4.3x faster cached**, and faster on all 23 test
+statements cold even with PostgreSQL's parser checking each new one. In
+front of real PostgreSQL 16 under pgbench, on one machine, throughput is
+**1.15x to 1.23x** shahrah's, simple and prepared, one client and sixteen.
+With three regions 75 and 110 ms apart, reads and writes in the home region
+are 1.08–1.23x as fast, the same across a region (where the network is the
+whole cost), and a count over every region takes 113 ms instead of 190,
+because the regions are asked at once. It also routes more: all 23 of the
+test statements, where shahrah runs 12, or 18 with its opt-in broadcast
+reads; on 51 statements over real data in three regions it gives
+PostgreSQL's answer 46 times to shahrah's 22, neither giving a wrong one;
+and it places new keys that shahrah refuses. Through the proxy end to end, a
+point read costs 21 µs over a direct connection on loopback. Method,
+variance, and where shahrah and others are still better:
 [docs/NUMBERS.md](docs/NUMBERS.md), reproducible with `cargo bench` and the
 kits in [`compare/`](compare).
 
@@ -632,9 +635,9 @@ are the usual alternatives, and where Lucent sits among them:
   protocol. Lucent keeps PostgreSQL itself.
 - **[shahrah](https://github.com/rs-alireza/shahrah)**, the geo-aware
   PostgreSQL proxy Lucent is based on, is where the directory of home
-  regions comes from; [docs/NUMBERS.md](docs/NUMBERS.md) compares the two,
-  statement by statement and under load, including where Lucent is still
-  behind.
+  regions comes from; [docs/NUMBERS.md](docs/NUMBERS.md) measures what
+  Lucent improves on it, statement by statement and under load, and where
+  shahrah is still ahead.
 
 ## Where it stands
 
@@ -798,8 +801,9 @@ ideas Lucent is built around are shahrah's:
   checks a shape before caching it, and the `where id = -1` bug that check
   catches, which shahrah found and documented.
 
-Lucent started from that design and has been measured against shahrah
-throughout; see [docs/NUMBERS.md](docs/NUMBERS.md). shahrah is released
+Lucent started from that design and works on improving it, above all its
+speed; [docs/NUMBERS.md](docs/NUMBERS.md) measures the improvements and
+where shahrah is still ahead. shahrah is released
 under the MIT licence, and its copyright notice is kept in
 [LICENSE](LICENSE) alongside Lucent's. If Lucent is useful to you,
 shahrah is worth a look too.
