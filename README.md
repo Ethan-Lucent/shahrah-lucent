@@ -4,6 +4,13 @@
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-wire%20protocol%20v3-336791.svg)](https://www.postgresql.org/docs/current/protocol.html)
 
+> Lucent is based on [shahrah](https://github.com/rs-alireza/shahrah) by
+> Alireza Eskandari ([@rs-alireza](https://github.com/rs-alireza)). The design
+> at its centre — a directory of the region each key lives in, moving a key
+> between regions while the application keeps reading and writing, and an
+> analysis cache keyed on a statement's shape — is shahrah's. See
+> [Credits](#credits).
+
 **Lucent is an open-source PostgreSQL proxy, written in Rust, that keeps each
 user's data in their own region and routes every query to the region that
 holds its rows.** Applications speak the ordinary PostgreSQL wire protocol to
@@ -62,8 +69,8 @@ Lucent handles the hard half.
 | `users JOIN orders ON o.buyer = u.id` across regions | refuse | **refuse** — and say exactly why |
 
 See [docs/NUMBERS.md](docs/NUMBERS.md) for a measured head-to-head against
-another geo-aware PostgreSQL proxy on the same machine with the same
-statements.
+[shahrah](https://github.com/rs-alireza/shahrah), the project Lucent is
+based on, run on the same machine with the same statements.
 
 The last two rows matter as much as the others. A `count(DISTINCT country)`
 cannot be rebuilt from per-region answers: the same country in two regions
@@ -474,23 +481,25 @@ silent bug: `where id = -1` must not end up routed to the region for `1`.
 Rather than enumerate those cases, the cache **verifies its own key** — on
 every miss it analyses both the original and the normalised statement and
 caches the shape only if they agree. A bug in the normaliser costs a cache
-miss, never a wrong answer.
+miss, never a wrong answer. Both ideas, a cache keyed on shape and a cache
+that checks a shape before keeping it, come from
+[shahrah](https://github.com/rs-alireza/shahrah), which documented the
+`where id = -1` case first.
 
-Against the closest of the other alternatives, another open-source
-geo-aware PostgreSQL proxy, with both analysers compiled into one process on
-one machine rather than compared across published figures: **3.3-4.3x faster
+Against shahrah, with both analysers compiled into one process on one
+machine rather than compared across published figures: **3.3-4.3x faster
 cached**, and faster on all 23 statements cold even with PostgreSQL's parser
-checking each new one. Lucent runs all 23 of those statements; the
-alternative runs 12, or 18 with its opt-in broadcast reads. On 51 statements
-over real data in three regions, Lucent gives PostgreSQL's answer 46 times
-and the alternative 22; neither gives a wrong one. In front of real
-PostgreSQL 16 under pgbench, on one machine, Lucent ran **1.15x to 1.23x**
-its transactions per second, simple and prepared, one client and sixteen.
-Through the proxy end to end, a point read costs 21 µs over a direct
-connection on loopback. With three regions 75 and 110 ms apart, Lucent reads
-and writes at home 1.08–1.23x as fast, matches it across a region, counts
-over every region in 113 ms to its 190, and inserts new keys it refuses.
-Method, variance, and the places other alternatives are better:
+checking each new one. Lucent runs all 23 of those statements; shahrah runs
+12, or 18 with its opt-in broadcast reads. On 51 statements over real data in
+three regions, Lucent gives PostgreSQL's answer 46 times and shahrah 22;
+neither gives a wrong one. In front of real PostgreSQL 16 under pgbench, on
+one machine, Lucent ran **1.15x to 1.23x** shahrah's transactions per
+second, simple and prepared, one client and sixteen. Through the proxy end to
+end, a point read costs 21 µs over a direct connection on loopback. With
+three regions 75 and 110 ms apart, Lucent reads and writes at home
+1.08–1.23x as fast as shahrah, matches it across a region, counts over every
+region in 113 ms to its 190, and inserts new keys it refuses. Method,
+variance, and the places shahrah and others are better:
 [docs/NUMBERS.md](docs/NUMBERS.md), reproducible with `cargo bench` and the
 kits in [`compare/`](compare).
 
@@ -621,10 +630,11 @@ are the usual alternatives, and where Lucent sits among them:
 - **Distributed SQL databases** such as CockroachDB and YugabyteDB offer
   multi-region placement as a different database that speaks the PostgreSQL
   protocol. Lucent keeps PostgreSQL itself.
-- **Other geo-aware PostgreSQL proxies** keep a directory of home regions as
-  Lucent does; [docs/NUMBERS.md](docs/NUMBERS.md) compares Lucent with the
-  closest of them, statement by statement and under load, including where
-  it is still behind.
+- **[shahrah](https://github.com/rs-alireza/shahrah)**, the geo-aware
+  PostgreSQL proxy Lucent is based on, is where the directory of home
+  regions comes from; [docs/NUMBERS.md](docs/NUMBERS.md) compares the two,
+  statement by statement and under load, including where Lucent is still
+  behind.
 
 ## Where it stands
 
@@ -768,6 +778,33 @@ Alongside, not part of the proxy:
 See [docs/NUMBERS.md](docs/NUMBERS.md) for what is measured, how, and what
 is not measured yet.
 
+## Credits
+
+Lucent is based on [shahrah](https://github.com/rs-alireza/shahrah), a
+geo-distributed PostgreSQL proxy by Alireza Eskandari
+([@rs-alireza](https://github.com/rs-alireza)). shahrah came first, and the
+ideas Lucent is built around are shahrah's:
+
+- a directory of the region each key lives in, put in front of the shard
+  map, so a user's rows stay in their region and a shard is chosen within it;
+- moving a key between regions while the application keeps reading and
+  writing, and the operator verbs around it: `WHERE IS`, `RELOCATE`,
+  `DRAIN`/`UNDRAIN` and `REBALANCE`;
+- routing hints in SQL comments, `/* ...: key=... */`, for statements whose
+  key the proxy cannot see;
+- a replicated table written in one writer region and copied to the others
+  by PostgreSQL's own replication;
+- an analysis cache keyed on a statement's shape rather than its text, which
+  checks a shape before caching it, and the `where id = -1` bug that check
+  catches, which shahrah found and documented.
+
+Lucent started from that design and has been measured against shahrah
+throughout; see [docs/NUMBERS.md](docs/NUMBERS.md). shahrah is released
+under the MIT licence, and its copyright notice is kept in
+[LICENSE](LICENSE) alongside Lucent's. If Lucent is useful to you,
+shahrah is worth a look too.
+
 ## Licence
 
-MIT.
+MIT. See [LICENSE](LICENSE), which carries shahrah's copyright notice as well
+as Lucent's.
