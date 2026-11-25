@@ -1,0 +1,8 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = false
+# Newer clippy no longer treats the product name as an identifier; the ".."
+# keeps the default list as well.
+doc-valid-idents = ["PostgreSQL", ".."]

@@ -1,4 +1,0 @@
-[[users]]
-name = "app1"
-database = "postgres"
-password = "app1pw"

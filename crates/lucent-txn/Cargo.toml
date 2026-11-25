@@ -1,0 +1,30 @@
+[package]
+name = "lucent-txn"
+description = "Two-phase commit coordinator for transactions that span regions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["postgresql", "two-phase-commit", "distributed", "transactions", "database"]
+categories = ["database"]
+
+[dependencies]
+lucent-pool.workspace = true
+lucent-proto.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "fs", "rt", "macros"] }
+
+[dev-dependencies]
+lucent-testkit.workspace = true
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+[lints]
+workspace = true

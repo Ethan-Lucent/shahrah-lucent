@@ -1,0 +1,27 @@
+[package]
+name = "lucent-testkit"
+description = "An in-process PostgreSQL backend that speaks the real wire protocol, so the proxy can be tested without a database."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["postgresql", "testing", "mock", "wire-protocol", "postgres"]
+categories = ["database", "development-tools::testing"]
+
+[dependencies]
+rustls.workspace = true
+tokio-rustls.workspace = true
+rustls-pki-types.workspace = true
+rcgen.workspace = true
+bytes.workspace = true
+lucent-proto.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

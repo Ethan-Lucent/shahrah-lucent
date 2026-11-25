@@ -1,0 +1,32 @@
+[package]
+name = "lucent-pool"
+description = "Per-endpoint connection pooling for backend PostgreSQL servers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["postgresql", "connection-pool", "pooling", "postgres", "tokio"]
+categories = ["database", "network-programming", "asynchronous"]
+
+[dependencies]
+rustls.workspace = true
+tokio-rustls.workspace = true
+rustls-pki-types.workspace = true
+webpki-roots.workspace = true
+bytes.workspace = true
+lucent-core.workspace = true
+lucent-proto.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "net", "rt", "macros"] }
+
+[dev-dependencies]
+lucent-testkit.workspace = true
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+[lints]
+workspace = true

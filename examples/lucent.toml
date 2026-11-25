@@ -1,0 +1,137 @@
+# A three-region deployment. Start it with:
+#   lucent serve --config examples/lucent.toml
+
+[server]
+listen = "127.0.0.1:6432"
+# Unique per proxy: it goes into every PREPARE TRANSACTION identifier and is
+# what stops two proxies resolving each other's in-doubt transactions.
+node = "eu-proxy-1"
+# Where commit decisions are written. Without it, a crash between prepare and
+# commit leaves prepared transactions for an operator to resolve by hand.
+commit_log = "./commit-log"
+
+[backend]
+user = "postgres"
+database = "shop"
+# password = "..."
+# libpq's sslmode names. prefer encrypts when the server offers it;
+# verify-full is what stops a man in the middle.
+tls = "prefer"
+# tls_ca_file = "/etc/lucent/backend-ca.pem"
+
+# TLS to clients. Without a certificate, clients that ask are declined.
+# [tls]
+# cert_file = "/etc/lucent/server.pem"
+# key_file = "/etc/lucent/server.key"
+# required = true
+
+# Probing backends. A replica further behind than this serves no reads, and
+# a session's reads wait for a replica that has replayed its writes.
+[health]
+interval_ms = 2000
+timeout_ms = 2000
+max_replica_lag_bytes = 16777216
+
+[pool]
+max_size = 16
+# Connections are shared between clients, so one that ran a SET, LISTEN or
+# PREPARE is reset before reuse, in the background. "always" also catches
+# temporary tables, at the cost of a reset on every return.
+reset = "when_changed"
+reset_query = "DISCARD ALL"
+# Connections opened to every backend at startup.
+warm = 2
+
+# Clients authenticate with SCRAM-SHA-256 against PostgreSQL's own stored
+# verifiers. With nothing here the proxy trusts every client, and refuses to
+# listen anywhere but loopback unless method = "trust" says so on purpose.
+[auth]
+# Roles allowed RELOCATE, DRAIN and UNDRAIN, once authenticated.
+operators = ["ops"]
+# Read a role's verifier from the home region's primary. A SECURITY DEFINER
+# function over pg_authid lets the backend role do this without superuser.
+query = "SELECT rolpassword FROM pg_authid WHERE rolname = $1"
+# Log in to backends as the client's own role, with the keys its login
+# proved, so GRANTs and row-level security still apply. The role needs the
+# same verifier in every region.
+passthrough = true
+
+# Or keep verifiers here, copied from pg_authid.rolpassword:
+# [[auth.users]]
+# name = "app"
+# verifier = "SCRAM-SHA-256$4096:<salt>$<StoredKey>:<ServerKey>"
+
+# Prometheus metrics, a JSON snapshot, key lookup and a dashboard. Off unless
+# listen is set; refuses to listen beyond loopback without a password.
+[admin]
+listen = "127.0.0.1:9187"
+# password_env = "LUCENT_ADMIN_PASSWORD"
+# Serve HTTPS with the [tls] certificate.
+# tls = true
+
+# Keep the directory in a table in every region, and allow RELOCATE. A move
+# changes the directory in the same transaction as the rows it moves. Takes
+# the place of the [[directory]] entries at the end of this file.
+# [directory_store]
+# table = "lucent_directory"
+# How long a statement waits for a moving key before 40001.
+# hold_ms = 10000
+# How long a move waits for writes under way and for its locks.
+# lock_timeout_ms = 5000
+# Record a key the first time it is written, so its reads go to one region.
+# record_new_keys = true
+# Have PostgreSQL itself refuse a write for a key in a region the key has
+# left (a trigger per geo-partitioned table; the backend role must own them).
+# guard = false
+# Several proxies share this directory: moves are agreed with every live
+# proxy, new keys are claimed, and a proxy that cannot reach the others
+# stops routing on the directory. Every proxy needs its own server.node.
+# shared = false
+# Where the proxies meet; the home region when unset. All must agree.
+# "majority" spreads it over every region, so losing any minority of them
+# stops nothing; lease_ms must then be at least three times poll_ms.
+# authority = "eu-west"
+# How often each proxy visits.
+# poll_ms = 200
+# How long a proxy routes after its lease was last renewed before refusing.
+# lease_ms = 2000
+
+[topology]
+home_region = "eu-west"
+
+[[topology.regions]]
+id = "eu-west"
+primary = { host = "eu.db.internal" }
+replicas = [{ host = "eu-replica.db.internal" }]
+
+# A second shard in the same place: new keys created here are spread
+# across the shards of the home region's location by a hash of the key, and
+# REBALANCE eu-west TO eu-west-2 LIMIT 100 moves keys between them.
+# [[topology.regions]]
+# id = "eu-west-2"
+# location = "eu-west"
+# primary = { host = "eu2.db.internal" }
+
+[[topology.regions]]
+id = "us-east"
+primary = { host = "us.db.internal" }
+
+[[topology.regions]]
+id = "ap-south"
+primary = { host = "ap.db.internal" }
+
+[[topology.tables]]
+table = "users"
+placement = "geo_partitioned"
+key = "tenant_id"
+
+[[topology.tables]]
+table = "currencies"
+placement = "global_replicated"
+
+# Keys already placed, for a proxy without a [directory_store]. A key with no
+# entry is written in the home region and read from every region.
+[[directory]]
+table = "users"
+key = "alice"
+region = "eu-west"

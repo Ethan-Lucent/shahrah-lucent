@@ -5,60 +5,70 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.95"
-
-[workspace.lints.rust]
-unsafe_code = "deny"
-unused_must_use = "deny"
-
-[workspace.lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-todo = "deny"
-unimplemented = "deny"
-unreachable = "deny"
-panic_in_result_fn = "deny"
-indexing_slicing = "deny"
-arithmetic_side_effects = "warn"
-print_stdout = "deny"
-print_stderr = "deny"
-dbg_macro = "deny"
-let_underscore_must_use = "deny"
-
-[profile.release]
-lto = "fat"
-codegen-units = 1
-debug = 1
-
-[profile.dev.package."*"]
-opt-level = 3
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/Ethan-Lucent/shahrah-lucent"
+homepage = "https://github.com/Ethan-Lucent/shahrah-lucent"
+authors = ["Lucent contributors"]
 
 [workspace.dependencies]
-shahrah-hash = { path = "crates/hash", version = "0.1.0" }
-shahrah-protocol = { path = "crates/protocol", version = "0.1.0" }
-shahrah-sql = { path = "crates/sql", version = "0.1.0" }
-shahrah-topology = { path = "crates/topology", version = "0.1.0" }
-shahrah-routing = { path = "crates/routing", version = "0.1.0" }
+lucent-proto = { path = "crates/lucent-proto", version = "0.1.0" }
+lucent-sql = { path = "crates/lucent-sql", version = "0.1.0" }
+lucent-core = { path = "crates/lucent-core", version = "0.1.0" }
+lucent-pool = { path = "crates/lucent-pool", version = "0.1.0" }
+lucent-txn = { path = "crates/lucent-txn", version = "0.1.0" }
+lucent-testkit = { path = "crates/lucent-testkit", version = "0.1.0" }
 
-arc-swap = { version = "1" }
-base64 = { version = "0.22" }
-bytes = { version = "1" }
-hmac = { version = "0.12" }
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
-sha2 = { version = "0.10" }
-subtle = { version = "2" }
-thiserror = { version = "2.0.20" }
-openraft = { version = "0.9", features = ["serde", "storage-v2"] }
-serde_json = { version = "1" }
-pg_query = { version = "6" }
-toml = { version = "0.9" }
-rand = { version = "0.9" }
-tokio = { version = "1" }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-pemfile = { version = "2" }
-rustls-native-certs = { version = "0.8" }
-tracing = { version = "0.1" }
-tracing-subscriber = { version = "0.3" }
-xxhash-rust = { version = "0.8.18", features = ["xxh3", "const_xxh3"] }
-serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+base64 = "0.23.1"
+criterion = { version = "0.7.0", features = ["html_reports"] }
+bytes = "1.12.1"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+hmac = "0.13.0"
+md-5 = "0.11.0"
+parking_lot = "0.13.0"
+rand = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+sqlparser = { version = "0.63.0", features = ["visitor"] }
+pg_query = "6.2.1"
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tokio = "1.54.1"
+tokio-util = "0.7.20"
+toml = "1.1.8"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pki-types = { version = "1.15.1", features = ["std"] }
+webpki-roots = "1.0.10"
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem", "crypto"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+lto = "thin"
+codegen-units = 1

@@ -1,154 +1,448 @@
-# The numbers
+# Numbers
 
-Every number here came from `bench/`, which refuses to report anything until the
-participants are on identical footing, runs them interleaved so drift lands on
-everyone, and reports a distribution rather than a figure. The bed is one
-machine: an i3-1315U with 2 performance cores and 4 efficiency cores, each
-participant capped at 2 CPUs and 1 GiB, all of them containers on one network
-reaching PostgreSQL 18 by DNS name. Nothing runs on the host.
+What a proxy costs is the work it adds on top of forwarding bytes. For a
+geo-router that is one question — *where does this statement go?* — and this
+document measures exactly that, and nothing else.
 
-**Read the spreads before the medians.** On this machine the same workload has
-measured 9 023, 8 080, 7 409 and 7 807 operations per second in four consecutive
-rounds with nothing changed. A single run is not a measurement here, and the
-tables below give min and max for that reason.
-
-## What shahrah is slower at, and by how much
-
-64 clients, `SELECT 1` — no table, so this is the cost of moving bytes through a
-proxy and nothing else. 5 interleaved rounds.
-
-| | µs of CPU each |
-|---|---|
-| pgbouncer | **21.5** |
-| shahrah | **32.6** |
-| PgDog | 42.2 |
-| pgcat | 51.1 |
-
-shahrah spent 52 µs here until the write path was buffered and the runtime was
-sized to the container's CPU quota. It issued **seven write syscalls per
-transaction where two suffice** — one per protocol frame — and started six worker
-threads inside a two-CPU cap. Both are fixed; the count is now exactly 2.00.
-
-64 clients, `pgbench -S` — a real keyed read, every statement carrying a
-different literal.
-
-| | µs of CPU each |
-|---|---|
-| pgbouncer | **28.8** |
-| shahrah | **54.5** |
-| pgcat | 58.5 |
-| PgDog | 65.5 |
-
-A first pass at this table had PgDog at 49.1 and shahrah behind it. That run was
-taken while the bed was drifting -- pgbouncer's own spread in it was 44% -- and it
-contradicted every other measurement, so it was taken again twice. The numbers
-above are the median of those two runs; the discarded one is named here rather
-than quietly dropped.
-
-Three shards, keyed reads, shahrah against the only other participant that can
-route them:
-
-| | µs of CPU each |
-|---|---|
-| shahrah | **50.7** |
-| PgDog | 62.5 |
-
-**shahrah is cheaper than pgcat and PgDog on the routing-free workload and
-still about half again pgbouncer's cost.**
-pgbouncer spends 21 µs per transaction where every proxy built on tokio spends
-41 to 52 — shahrah, pgcat and PgDog alike. Taking a statement apart to find its
-key costs 13 µs of shahrah's total; the other 49 is the pass-through path it
-shares with the other two. This is an architecture difference, not an
-optimisation that was missed, and pgbouncer has twenty years of tuning on a much
-narrower problem. **And the claim this project used to make against pgbouncer no longer holds
-either.** asyncpg names every prepared statement per connection, those names
-collide across a transaction pool, and pgbouncer used to break on it -- but
-pgbouncer 1.25.2 handles it: forty concurrent asyncpg clients multiplexed over a
-two-connection server pool, thirty prepared statements each, zero failures, the
-same as shahrah. That was fixed in pgbouncer 1.21 in 2023. **shahrah has no
-pooling advantage over pgbouncer.** What it has is sharding and geography.
-
-**Against PgDog and pgcat shahrah is now cheaper on every workload measured** --
-8, 64 and 256 clients, one shard and three, with and without a key to extract.
-That was not true this morning: it took buffering the write path and sizing the
-runtime to the container's CPU quota, both of which were shahrah's own waste
-rather than anything the others do better.
-
-## What changed while measuring
-
-Two attempts, one that failed and one that worked. Both are here because the one
-that failed is the more useful result.
-
-**Thread-per-core with connection affinity: no.** P2 attributed about 20% to
-cross-thread wakeup and named this as the fix; P3 repeated it. Built and measured
-over nine interleaved rounds it moved nothing — 54.1 µs against 54.9 — and at six
-cores with workers matched to them it was actively worse: **8% less CPU per
-transaction and 20% less throughput**, because connections pinned at accept time
-stay pinned and a work-stealing runtime rebalances where static affinity cannot.
-It was removed.
-
-**A cache on the shape of a statement rather than its text: yes, and it was the
-largest single change in the project.** The statement cache was keyed on the SQL
-text, so a client that inlines its literals — which is what the simple query
-protocol means, and what pgbench does — missed on every statement and paid a full
-parse each time. Keying on the token stream with the constants replaced, and
-lifting the key out of the one remaining literal, cut a keyed read from **93.9 µs
-to 60.8 µs of CPU** and raised its throughput **55%**. On three shards it took
-102.2 µs down to 72.6 and closed most of the distance to PgDog.
-
-The cache verifies itself when it stores a shape: it re-extracts the key from the
-statement it just parsed and only caches the shape if it reads back identical.
-The first thing that check caught was `where id = -1`, where the lexer sees `-`
-and `1` as two tokens and the parser folds them into one constant — the cache
-would have routed every negative key to the shard for its absolute value.
-
-## The number the others cannot produce
-
-Three regions, the real latencies shaped in per pair — 42 ms between North
-America and Europe, 75 ms to Asia, 110 ms between Europe and Asia — a proxy in
-each region, and users whose data is either placed in their own region or all in
-one.
-
-Five interleaved rounds, 100 reads per region per arm.
-
-| a user in | data in the user's region | one region for everyone |
-|---|---|---|
-| na-east | 0.15 ms | 0.17 ms |
-| eu-central | **0.20 ms** | 43.22 ms |
-| asia-west | **0.16 ms** | 76.16 ms |
-| every user, median of rounds | **0.15 ms** (0.14 – 0.29) | 43.18 ms (43.11 – 43.72) |
-
-**0.15 ms against 43.18 ms.** Stated as a multiple that is 150x to 318x
-depending on the round, and the spread is the point: the slow side is an ocean
-and barely moves, the fast side is under a millisecond and is mostly noise. The
-two absolute numbers are the result; the multiple is not a measurement.
-
-The na-east row is the honest cost: placing data by region means asking a
-directory where it is, which a single-region deployment never has to do.
-
-A benchmark with one entrant proves nothing, so the comparison is against what
-people actually do rather than against nobody: one region, everyone else pays the
-ocean. Sharding without geography lands in the same place — it puts a third of
-the users in each region and reads them from wherever the hash sent them.
-
-The p95 column of the geo run is worth reading too: 43 ms for eu-central and
-77 ms for asia-west, against medians under a millisecond. That is the first read
-of a key whose home this proxy has not yet learned. The directory cache turns the
-second read into a hash lookup; the first one crosses.
-
-## Reproducing this
+Reproduce everything here with:
 
 ```bash
-./bench/run.sh --suite single --clients 64 --seconds 12 --rounds 7
-./bench/run.sh --suite sharded --clients 64 --seconds 12 --rounds 5 --workload select
-cd bench/geo && docker compose up -d --wait && python3 harness.py
+cargo bench
 ```
 
-## Which column to trust
+No database, no Docker, no containers, no three-region testbed. That is
+deliberate. A benchmark nobody can run is a benchmark nobody checks.
 
-Run the single suite twice on this machine and the throughput medians move by
-about 7% while the CPU per transaction moves by less than 2% -- shahrah 57.3 then
-58.2, pgbouncer 22.1 then 23.1, pgcat 48.8 then 48.7, PgDog 45.2 then 45.6.
-**CPU per transaction is the reproducible column here.** Throughput on a
-six-core laptop under a container cap is a measurement of the laptop as much as
-of the proxy.
+## Method
+
+- **Machine:** Intel Core i5-12600K, 16 logical cores, Windows 11, for the
+  routing figures; the end-to-end figures and the second set of comparison
+  figures below were measured on a 4-vCPU Linux VM (Intel Xeon @ 2.80 GHz).
+  Figures from the two machines are never mixed in one ratio.
+- **Harness:** [criterion](https://github.com/bheisler/criterion.rs) 0.7, which
+  warms up, takes 100 samples per benchmark, and reports a confidence interval
+  rather than a single figure.
+- **Build:** `--release` with thin LTO and one codegen unit.
+- **What is timed:** wall-clock, single-threaded, one statement per iteration.
+- **Variance:** reruns of the same build moved individual figures by up to
+  **15%** (`route_end_to_end/point_read` measured 7.57 µs and 8.66 µs on two
+  consecutive runs). Treat anything under about 20% as noise. Where a number
+  matters below, the slower of the two runs is quoted.
+
+## Routing decision cost
+
+The full job: SQL text in, routing decision out.
+
+| Statement | Cold | **Cached** | Speed-up |
+|---|---|---|---|
+| `SELECT 1` | 4.63 µs | **264 ns** | 17.5× |
+| point read, `WHERE tenant_id = 'alice'` | 14.79 µs | **853 ns** | 17.3× |
+| point write, `UPDATE ... WHERE tenant_id = 'alice'` | 10.72 µs | **944 ns** | 11.4× |
+| scatter over two regions, `IN ('alice','bob')` | 15.84 µs | **1.33 µs** | 11.9× |
+| scatter over three regions, no key | 12.77 µs | **715 ns** | 17.9× |
+| distributed write, multi-row `INSERT` | 14.16 µs | **1.59 µs** | 8.9× |
+| join inside one region | 34.96 µs | **1.60 µs** | 21.9× |
+| refused aggregate | 10.09 µs | **415 ns** | 24.3× |
+
+**Inlined literals, 256 distinct values, cache warm: 1.06 µs.**
+
+These are as the proxy ships: the analyser reads every query block of a
+statement, not just its outer `FROM`, and PostgreSQL's own parser checks the
+tables of every statement shape it has not seen before (see *Parser
+fidelity* below). That made the cold column 1.7–2.4× what it was (a point
+read was 8.66 µs); the cached column, which is what every repeat of a shape
+costs, did not move beyond noise.
+
+That last row is the one that matters for a real application. Every statement
+has a different literal in it, so a cache keyed on SQL text would miss on
+every single call. This one hits, because the key is the statement's *shape*.
+
+## Where the time goes
+
+| | |
+|---|---|
+| Parsing and reading every block (`sqlparser`) | 9–21 µs |
+| Checking the tables with PostgreSQL's parser, first sight of a shape | 2.5–7 µs |
+| Planning (topology, directory, merge safety) | **40–635 ns** |
+| Directory lookup, 1 000 keys | 198 ns |
+| Directory lookup, 100 000 keys | 221 ns |
+| Directory lookup, 1 000 000 keys | **316 ns** |
+| Planning a bound parameter at `Bind` | 436 ns |
+
+Parsing is roughly 95% of the cold cost and planning is the rest, which is why
+the analysis cache is worth more than any amount of tuning in the planner. The
+directory is a `BTreeMap`, so lookups grow logarithmically: a thousand-fold
+increase in keys costs 118 ns.
+
+## Improvements on shahrah
+
+[shahrah](https://github.com/rs-alireza/shahrah), by Alireza Eskandari, is
+the project Lucent is based on: a Rust proxy that keeps a directory of the
+region each key lives in and moves keys between regions. This section
+measures what Lucent improves on it, above all speed, and where shahrah is
+still better. shahrah's own
+[NUMBERS.md](https://github.com/rs-alireza/shahrah/blob/main/docs/NUMBERS.md)
+is careful work — interleaved rounds, distributions rather than single
+figures, a retracted claim, and a plain statement that it costs about 1.5x
+pgbouncer — and worth reading.
+
+Rather than compare against published figures across machines, both
+analysers were compiled into **one process** and interleaved by criterion on
+**one machine**, each given the same statements and an equivalent placement
+policy written in its own vocabulary. shahrah's analyser and cache
+(`shahrah_sql::analysis::analyse` and `shahrah_sql::cache::Cache`) are
+public, so no estimation is involved; shahrah was pinned at `ac057a6`. That
+harness builds shahrah's code, so it is not shipped in this repository; the
+fidelity and three-region kits further down work with any proxy.
+
+### Speed improvements
+
+Both caches are warmed first and then measured with a different literal on
+every call, so each is doing the work it was built for. Benchmarking one
+project's cold path against the other's warm one would produce a larger number
+and mean nothing.
+
+| Workload | Lucent | shahrah | Speed-up |
+|---|---|---|---|
+| Cached, 256 varying literals | **802 ns** | 2.75 µs | **3.4x** |
+| Cached, repeated statement | **718 ns** | 2.85 µs | **4.0x** |
+| Cold, median across 23 statements | — | — | **~1.7x** |
+
+Cold, Lucent is faster on **all 23** statements, by 1.18x to 2.05x. The
+biggest improvements are where predicates get complicated — `tenant_id =
+'alice' OR name = 'ada'` takes 7.56 µs, down from 15.27 µs — and the smallest
+is a plain single-row `INSERT`, 6.68 µs down from 7.88 µs.
+
+Re-measured later on the Linux VM, with the analyser grown since (it now sees
+inside `COPY` and `EXPLAIN`) and criterion's measurement time cut to three
+seconds per benchmark:
+
+| Workload | Lucent | shahrah | Speed-up |
+|---|---|---|---|
+| Cached, 256 varying literals | **983 ns** | 3.15 µs | **3.2x** |
+| Cached, repeated statement | **933 ns** | 3.43 µs | **3.7x** |
+| Cold, median across 23 statements | — | — | **2.2x** |
+
+Cold, Lucent is again faster on all 23, by 1.70x (a multi-row `INSERT`,
+11.0 µs down from 18.7 µs) to 3.06x (a key under `AND`, 10.4 µs down from
+31.9 µs). The cold improvement is larger on this machine than on the first;
+both are reported rather than either being picked.
+
+Measured a third time, on the same VM, after the analyser learned to read
+every query block and PostgreSQL's own parser began checking every new
+statement shape, as the proxy now ships (`lucent-sql` built with
+`pg-parser`):
+
+| Workload | Lucent | shahrah | Speed-up |
+|---|---|---|---|
+| Cached, 256 varying literals | **834 ns** | 3.62 µs | **4.3x** |
+| Cached, repeated statement | **934 ns** | 3.12 µs | **3.3x** |
+| Cold, median across 23 statements | — | — | **1.41x** |
+
+Cold, Lucent is still faster on all 23, now by 1.05x (`count(*)` across
+regions, 11.5 µs down from 12.1 µs) to 1.83x (the same key under `OR`,
+16.9 µs down from 31.0 µs). The check costs most of the cold improvement, and
+it is paid once per statement shape.
+
+The improvement is larger with the cache because the two caches are doing
+different amounts of work on a hit, not because either is badly written.
+
+### A correction
+
+An earlier draft of this document put the speed improvement at 15x, from
+Lucent's measured 0.78 µs and shahrah's **published** 13 µs, and described
+it as "indicated but not proven". That extrapolation was wrong by about a
+factor of four.
+
+Running its code here gives 2.75 µs, not 13 µs. The published figure is
+CPU-µs per transaction under 64 concurrent clients on an i3-1315U; this is
+single-threaded wall-clock on an i5-12600K. Those are not the same quantity,
+and the difference between them was most of the apparent gap.
+
+The real improvement is **3.4x to 4.0x**. It is kept here because a benchmark
+document that quietly drops its own overstatements is not worth reading.
+
+### Decisions, measured
+
+Speed is not the only improvement. Given identical
+input, which statements does each project agree to run? shahrah's
+proxy can also read a sharded table from every shard when the table opts into
+*broadcast*, so it is shown both ways: as configured by default, and with both
+sharded tables opted in.
+
+| Statement | Lucent | shahrah | shahrah, broadcast on |
+|---|---|---|---|
+| point read, including reversed, aliased, cast and negative keys | one region | one region | one region |
+| point write, insert, delete | one region | one region | one region |
+| key under `AND` | one region | one region | one region |
+| `count(*)` within one region | one region | one region | one region |
+| replicated read | one region | one region | one region |
+| **no key at all** | fan out | refused | fan out |
+| **key in an `IN` list** | fan out, 2 of 3 regions | refused | fan out, every shard |
+| **same key under `OR`** | fan out, 2 of 3 regions | refused | fan out, every shard |
+| **key `OR` unconstrained** | fan out | refused | fan out |
+| **`count(*)` across regions** | fan out, combined | refused | fan out, combined |
+| **ordered scatter** | fan out, sorted merge | refused | fan out, sorted merge |
+| **`sum()` across regions** | fan out, combined | refused | refused |
+| **`DISTINCT` across regions** | fan out, combined | refused | refused |
+| **multi-region insert** | distributed write | refused | refused |
+| **join within one region** | one region | refused | refused |
+| replicated write | every region, two-phase commit | writer region | writer region |
+| **join across regions** | fan out, rows meet only on the key | refused | refused |
+
+**Of 23 statements, Lucent runs 23; shahrah runs 12, or 18 with
+broadcast on.**
+
+Three rows are worth separating out:
+
+- **`join within one region`.** shahrah refuses *any* statement
+  touching two sharded tables — "more than one sharded table in one
+  statement" — even when both are constrained to the same key and therefore
+  provably in one place. That is a large class of ordinary application
+  queries.
+- **Aggregates across regions.** Lucent splits `count`, `sum`, `avg`, `min`,
+  `max`, `bool_and`/`bool_or`, `bit_and`/`bit_or` and `DISTINCT` into per-region
+  partials and finishes them exactly, in the proxy or in the home region's
+  PostgreSQL; aggregates it cannot split, such as `count(DISTINCT)` or a
+  percentile, are refused with the reason. shahrah's broadcast merges
+  `count(*)`, sorts and limits, and refuses the rest.
+- **`IN` and `OR` over keys.** Both fan out, but Lucent asks only the regions
+  holding the named keys; a broadcast asks every shard.
+
+### A second correction
+
+The previous version of this table showed shahrah refusing every read
+without a key, and Lucent running 19 statements to its 12. That was measured
+with shahrah's broadcast left off, because the harness called its
+analyser and broadcast is decided later, in its proxy. With broadcast on, it
+runs 18. The harness now applies the rule shahrah's proxy applies and
+reports both columns. Lucent's own count has also moved, to 22, because it
+now combines aggregates across regions that it used to refuse, and then to
+23: the join across regions is on the shard key, so its rows only ever meet
+in one region, and running it in each region finds every pair (here none,
+since the two keys differ).
+
+### Parser fidelity, measured
+
+shahrah parses with [`pg_query`](https://github.com/pganalyze/pg_query.rs),
+PostgreSQL's own parser, so it reads exactly what PostgreSQL reads. Lucent
+parses with `sqlparser`, a reimplementation that is faster and builds
+anywhere, and now puts the same libpg_query behind it (the `pg-parser`
+feature, on by default): for every statement shape it has not seen, PostgreSQL's
+parser names the tables the statement reads, and if it names one sqlparser
+did not, PostgreSQL's reading is used; a statement sqlparser cannot parse at
+all is analysed from PostgreSQL's parse tree. Building without the feature
+needs no C compiler and keeps everything else.
+
+Parsing is half of it; the other half is what a proxy does with what it
+parsed. [`compare/fidelity`](../compare/fidelity) runs 51 statements through
+each proxy on real data split across three PostgreSQL 16 databases, and
+compares every answer with the one PostgreSQL gives over a single database
+holding every row: point and scatter reads, grammar sqlparser does not know,
+subqueries and `WITH`, joins, set operations, replicated tables and writes.
+
+| | correct | refused | **wrong** |
+|---|---|---|---|
+| Lucent | **46** | 5 | **0** |
+| shahrah (broadcast on, `currencies` replicated) | 22 | 29 | 0 |
+| Lucent before this work | 30 | 15 | **6** |
+
+shahrah is never wrong: when PostgreSQL's parser shows it a table
+inside a subquery, a `WITH` query, a set operation or a second sharded table,
+it refuses. Lucent was wrong six times, and that is the finding worth stating
+plainly: its analyser collected tables from `FROM` clauses only, so a table
+read in a subquery or a `WITH` query was invisible to the router, which
+answered from one region's rows; and sqlparser reads `FROM ONLY users` as a
+table called `only`. A write to a replicated table whose subquery read
+geo-partitioned rows would also have changed each region's copy differently
+(the command tag does not show that, so the table counts it correct).
+
+All six are fixed. The analyser walks every query block, credits each
+predicate to the block it belongs to, and carries a key along join conditions
+and into correlated subqueries; statements whose geo-partitioned tables are
+joined shard key to shard key run in every region at once, since their rows
+only meet where the keys are equal, which is how Lucent answers the joins,
+correlated subqueries and `INSERT ... SELECT`s shahrah refuses.
+PostgreSQL's parser catches what sqlparser misreads and reads what it cannot.
+The five statements Lucent still refuses need rows from several regions
+combined in a way no region can do alone (a join not on the key, a replicated
+table filtered by rows spread across regions), and shahrah refuses
+them too.
+
+### Where shahrah and others are still better
+
+- **Hearing about a move.** shahrah's proxies form a Raft group that
+  agrees on the topology and hears about a move at once. Lucent's proxies
+  share a directory through leases and confirmations, either in one authority
+  region or, with `authority = "majority"`, across a majority of the regions'
+  own databases, with Paxos for new keys (see the README), and a proxy may
+  hold a moving key up to two polls longer. In majority mode no single region
+  is a dependency: against PostgreSQL 16 with two proxies and three regions,
+  stopping one region's database left both routing — a key moved between the
+  other two in 0.49 s and 43,515 transactions across the outage and restart
+  had no failures — while the same outage with the authority in that region
+  refused every geo statement. The quorum is the regions' databases, which a
+  deployment already runs, so there is no separate group of proxies to keep
+  alive: one proxy per region is enough. The window a write delayed past half
+  a lease leaves open is closed by the database: with `guard = true`
+  PostgreSQL refuses a write for a key in a region it has left, which no
+  agreement between proxies, Raft included, can do for a write already in
+  flight (it costs 24–34% on single-row writes, so it is opt-in).
+- **Very large key counts.** shahrah hashes keys onto 65,536 logical
+  shards and moves whole ranges of them. Lucent's shards are regions sharing
+  a `location`: new keys spread across the home location's shards by hash,
+  and its `REBALANCE` moves keys in atomic batches, 25 to a transaction by
+  default — 100 keys in 0.15 s against PostgreSQL 16, where one move per key
+  took 1.31 s. Per key is finer and keeps a key's tables together; per range
+  never needs a directory entry for each key.
+- **The dashboard.** Both have live dashboards (WebSocket on one side,
+  server-sent events on Lucent's) that list every proxy, operator verbs
+  (`DRAIN`, `REBALANCE`; Lucent also `ROUTE` and `RELOCATE`), warm
+  connections, alerts and routing hints. shahrah's shows the whole
+  fleet from any proxy, with history charts and a page without JavaScript;
+  Lucent's shows less about each other proxy than its heartbeat summary.
+- **Evidence from real networks.** Other alternatives report end-to-end
+  numbers from three-region beds on real networks, against pgbouncer, pgcat
+  and PgDog. Lucent's cross-region figures are from one machine with the
+  regions' round trips simulated (see *Across three regions* below), and it
+  has not been measured against pgbouncer.
+
+Two areas that used to be listed here are not any more: replicated writes
+(Lucent has the same writer-region mode, keeps read-your-writes, and also
+offers a synchronous two-phase commit to every copy) and parser fidelity
+(above).
+
+## Across three regions
+
+[`compare/geo`](../compare/geo) puts three PostgreSQL 16 databases a round
+trip apart (eu-west to us-east 75 ms, to ap-south 110 ms, us-east to
+ap-south 42 ms) with a relay that delays every chunk, and one Lucent proxy
+and one shahrah proxy in each region, with the same placement.
+pgbench runs beside the eu-west proxies, four clients, each workload through
+each proxy in turn, twice, 12 seconds a time. Milliseconds, p50 / p95, and
+transactions per second:
+
+| Workload | Lucent | shahrah | Speed-up |
+|---|---|---|---|
+| point read, home region | **0.20 / 0.39**, 17,217/s | 0.25 / 0.48, 14,008/s | 1.23x the rate |
+| prepared point read, home region | **0.16 / 0.28**, 22,609/s | 0.17 / 0.31, 20,863/s | 1.08x |
+| point write, home region | **0.27 / 0.55**, 13,037/s | 0.33 / 0.65, 10,825/s | 1.20x |
+| replicated read | **0.17 / 0.33**, 20,419/s | 0.20 / 0.39, 17,296/s | 1.18x |
+| point read, 75 ms away | 77.90 / 78.92 | 78.04 / 79.16 | even |
+| point read, 110 ms away | 112.23 / 114.02 | 112.27 / 113.96 | even |
+| point write, 75 ms away | 77.97 / 78.91 | 78.06 / 79.16 | even |
+| `count(*)` over every region | **113.19 / 114.72** | 190.05 / 191.98 | **1.68x faster** |
+| insert of a new key | **0.17 / 0.34**, 20,165/s | refused | |
+
+At home Lucent is ahead by the margin it has in front of PostgreSQL on one
+machine. Across a region the network is the whole answer and the two are
+level. Over every region Lucent asks all three at once and waits for the
+farthest, 110 ms; shahrah's 190 ms is 75 + 110 plus its own time, the
+shards asked one after another. shahrah will not place a key its
+directory does not list when there is more than one region; Lucent places it
+in the proxy's home region (or home shard).
+
+What this is not: a wide-area network. The delay is constant, without jitter
+or loss, and both proxies, the relay and all three databases share one
+4-vCPU machine. Each proxy runs on its own, shahrah without its Raft
+group and Lucent without a shared directory, and each keeps one warm
+connection to every region.
+
+## A note on cache correctness
+
+Proxies like this cache analyses keyed on statement shape with literals
+stripped, as shahrah did first and Lucent does after it, and shahrah's
+[NUMBERS.md](https://github.com/rs-alireza/shahrah/blob/main/docs/NUMBERS.md)
+documents the bug that can introduce: `where id = -1` routed to the shard for
+the absolute value.
+
+That is an easy bug to write and a hard one to notice: it is silent, it only
+affects negative keys, and the query still returns rows. Lucent guards
+against the whole class rather than that one instance. On every cache miss it
+analyses the original statement *and* the normalised one and compares them,
+and caches the shape only if they agree. A shape that fails is marked
+unusable and always analysed in full.
+
+So a bug in the normaliser costs a cache miss, never a wrong answer — and the
+check also catches cases that are not about signs at all, such as `ORDER BY 1`
+becoming `ORDER BY $1`, which would merge a scattered result in the wrong
+order. Both are covered by tests.
+
+The verification runs once per shape, so its cost disappears under any
+repeating workload. It is included in every number in this document.
+
+## End to end
+
+The same statements sent straight to a backend and through the proxy in front
+of it, both in this process over loopback TCP, on the Linux VM. The backend is
+the testkit's, not PostgreSQL, so the difference is the proxy's own work —
+parsing, routing, relaying, one extra hop on loopback — and what a real server
+adds is left out rather than guessed at.
+
+```bash
+cargo bench -p lucent --bench proxy
+```
+
+| | direct | through the proxy | added |
+|---|---|---|---|
+| point read, simple protocol | 65.2 µs | 86.4 µs | **21 µs** |
+| point read, prepared (`Parse`/`Bind`/`Execute`/`Sync`) | 66.2 µs | 95.3 µs | **29 µs** |
+| 10 000 rows | 5.03 ms | 6.93 ms | **1.9 ms** |
+
+Before answers from one region were relayed as they arrive, the 10 000-row
+result was decoded and re-encoded in the proxy: measured the same way on the
+same machine, it added **5.1 ms** (6.06 ms direct, 11.12 ms through the proxy).
+Point reads did not move outside noise.
+
+## Against PostgreSQL, through both proxies
+
+PostgreSQL 16.15 on the same 4-vCPU Linux VM: three clusters standing in for
+three regions, plus a streaming replica of one, all on loopback. Each proxy
+was given the same topology and authenticated clients with SCRAM; Lucent was
+also probing every backend twice a second. The statement is a one-row point
+read, `SELECT name FROM users WHERE tenant_id = 'alice'`, which both proxies
+send to the same primary, and *direct* is pgbench connected to that primary.
+pgbench 16.15, six seconds per run, `-j` equal to `-c`, with direct, Lucent
+and shahrah taking turns in each of three rounds. Medians, in
+transactions per second, with the range across rounds:
+
+| | direct | Lucent | shahrah | Speed-up |
+|---|---|---|---|---|
+| simple, 1 client | 7 039 (7 035–7 119) | **4 266** (4 133–4 337) | 3 465 (3 358–3 953) | **1.23x** |
+| simple, 16 clients | 19 503 (18 288–19 662) | **15 008** (14 053–16 075) | 12 919 (12 450–13 177) | **1.16x** |
+| prepared, 1 client | 9 037 (8 783–9 502) | **5 305** (5 160–5 441) | 4 537 (4 484–4 811) | **1.17x** |
+| prepared, 16 clients | 21 032 (20 873–21 218) | **16 801** (16 481–17 475) | 14 604 (14 443–14 976) | **1.15x** |
+
+The first time this was run, Lucent **lost** on prepared statements: 4 347
+against 4 748 with one client, 15 030 against 15 364 with sixteen. It held
+every statement itself and parsed it again on the backend in every batch, so
+a prepared statement cost a parse it would not have cost against PostgreSQL.
+It now prepares a statement the client named on each pooled connection once,
+under a name derived from its text, and binds it there after that. A copy is
+only used if it was parsed after the client's own `Parse`, so a schema change
+reaches the client exactly as it would directly; that was checked against
+this PostgreSQL by altering the table under pgbench, which got the same
+`cached plan must not change result type` through Lucent as it did direct.
+
+Read these with their limits in mind:
+
+- pgbench, both proxies and every PostgreSQL shared four vCPUs, so each
+  figure includes contention a real deployment would not have, and neither
+  proxy was tuned beyond its defaults.
+- Loopback hides the network. What a region away costs is a round trip per
+  statement, the same through either proxy, and not measured here.
+- A proxy is a large share of a fast query's time on this machine: direct
+  PostgreSQL ran 1.25x to 1.7x the transactions it ran through Lucent, and
+  1.44x to 2.03x those through shahrah.
+
+## What is not measured here
+
+- Anything across real regions, with real latency between them.
+- CPU per transaction, and throughput beyond sixteen clients.
+- How long two-phase commit and `RELOCATE` take against real backends. Both
+  were run against the PostgreSQL above to check they are correct — rows,
+  identity columns and the directory all moved, no prepared transaction left
+  behind — but not timed.
+
+Each of those needs a testbed this document does not yet have; until then it
+says nothing about them.

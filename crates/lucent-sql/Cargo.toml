@@ -1,0 +1,36 @@
+[package]
+name = "lucent-sql"
+description = "Statement analysis: parses SQL and extracts shard keys, read/write intent, and routing shape."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["postgresql", "sql", "parser", "sharding", "query-routing"]
+categories = ["database", "parser-implementations"]
+
+[features]
+# PostgreSQL's own parser, for statements sqlparser cannot read and to
+# check the tables it finds. Builds C code, and needs a C compiler and
+# libclang.
+pg-parser = ["dep:pg_query"]
+
+[dependencies]
+pg_query = { workspace = true, optional = true }
+serde.workspace = true
+sqlparser.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[[bench]]
+name = "analysis"
+harness = false
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+pg_query.workspace = true
+criterion.workspace = true
